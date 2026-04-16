@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "Noto Color Emoji", sans-serif;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    color: #0f172a;
+    width: 960px;
+    padding: 36px;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .symbol {
+    font-size: 64px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    line-height: 1;
+    color: #0f172a;
+  }
+  .name {
+    color: #64748b;
+    margin-top: 8px;
+    font-size: 18px;
+  }
+  .price-block { text-align: right; }
+  .price {
+    font-size: 54px;
+    font-weight: 700;
+    line-height: 1;
+    color: #0f172a;
+  }
+  .change {
+    margin-top: 10px;
+    font-size: 20px;
+    font-weight: 600;
+  }
+  .change.up { color: #16a34a; }
+  .change.down { color: #dc2626; }
+  .change.flat { color: #64748b; }
+  .verdict-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-top: 22px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 18px;
+    border-radius: 999px;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .badge.bull { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+  .badge.bear { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+  .badge.neutral { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+  .badge.watch { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+  .headline {
+    color: #334155;
+    font-size: 20px;
+    font-weight: 500;
+  }
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-top: 22px;
+  }
+  .metric {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .metric-label {
+    font-size: 13px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    font-weight: 600;
+  }
+  .metric-value {
+    font-size: 26px;
+    font-weight: 700;
+    margin-top: 6px;
+    color: #0f172a;
+  }
+  .metric-value.up { color: #16a34a; }
+  .metric-value.down { color: #dc2626; }
+  .section {
+    margin-top: 28px;
+  }
+  .section-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 24px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .section-title .icon { font-size: 28px; }
+  .section-title .accent {
+    width: 6px;
+    height: 26px;
+    background: #0ea5e9;
+    border-radius: 3px;
+  }
+  .section.bull .accent { background: #16a34a; }
+  .section.bear .accent { background: #dc2626; }
+  .section.risk .accent { background: #d97706; }
+  .bullets { padding: 0; margin: 0; list-style: none; }
+  .bullet {
+    display: flex;
+    gap: 12px;
+    padding: 9px 0;
+    font-size: 20px;
+    line-height: 1.4;
+    color: #1e293b;
+    font-weight: 500;
+  }
+  .bullet-icon {
+    flex-shrink: 0;
+    width: 28px;
+    text-align: center;
+    font-size: 22px;
+  }
+  .warning-panel {
+    background: #fef2f2;
+    border-left: 5px solid #dc2626;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-top: 10px;
+    font-size: 18px;
+    font-weight: 500;
+    color: #991b1b;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .warning-panel .icon { font-size: 22px; }
+  .footer {
+    margin-top: 36px;
+    padding-top: 18px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+    color: #94a3b8;
+  }
+  .footer .disclaimer { font-style: italic; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="symbol">{{ symbol }}</div>
+    {% if name %}<div class="name">{{ name }}</div>{% endif %}
+  </div>
+  {% if price is not none %}
+  <div class="price-block">
+    <div class="price">${{ "%.2f"|format(price) }}</div>
+    {% if change_pct is not none %}
+    <div class="change {{ 'up' if change_pct > 0 else 'down' if change_pct < 0 else 'flat' }}">
+      {{ '▲' if change_pct > 0 else '▼' if change_pct < 0 else '—' }} {{ "%.2f"|format(change_pct) }}%
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if verdict or headline %}
+<div class="verdict-row">
+  {% if verdict %}
+  <span class="badge {{ verdict_kind or 'neutral' }}">{{ verdict_icon or '' }} {{ verdict }}</span>
+  {% endif %}
+  {% if headline %}<span class="headline">{{ headline }}</span>{% endif %}
+</div>
+{% endif %}
+
+{% if metrics %}
+<div class="metrics">
+  {% for m in metrics %}
+  <div class="metric">
+    <div class="metric-label">{{ m.label }}</div>
+    <div class="metric-value {{ m.kind or '' }}">{{ m.value }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% for s in sections %}
+<div class="section {{ s.kind or '' }}">
+  <div class="section-title">
+    <span class="accent"></span>
+    {% if s.icon %}<span class="icon">{{ s.icon }}</span>{% endif %}
+    <span>{{ s.title }}</span>
+  </div>
+  <ul class="bullets">
+    {% for b in s.bullets %}
+    <li class="bullet">
+      <span class="bullet-icon">{{ b.icon if b is mapping else '•' }}</span>
+      <span>{{ b.text if b is mapping else b }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endfor %}
+
+{% if warnings %}
+<div class="section risk">
+  <div class="section-title">
+    <span class="accent"></span>
+    <span class="icon">⚠️</span>
+    <span>Warnings</span>
+  </div>
+  {% for w in warnings %}
+  <div class="warning-panel">
+    <span class="icon">⚠️</span>
+    <span>{{ w }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="footer">
+  <div class="disclaimer">Paper trading analysis. Not financial advice.</div>
+  <div>{{ timestamp }}</div>
+</div>
+
+</body>
+</html>
