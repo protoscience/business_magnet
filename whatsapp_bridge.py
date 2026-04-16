@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import os
 import sys
@@ -74,6 +75,32 @@ def _content_to_text(content) -> str:
     return ""
 
 
+def _derive_peer_key(req: "ChatRequest") -> str | None:
+    """
+    Derive a stable per-caller key.
+
+    Priority:
+      1. explicit `user` field on the request (if a future OpenClaw version
+         learns to forward sender identity, or when tested via curl).
+      2. SHA-256 of the FIRST user message in the replayed history.
+         OpenClaw replays the full history per WhatsApp sender on every
+         request, so messages[0] is stable within a user's ongoing
+         conversation and ~unique between distinct WhatsApp users.
+
+    Returns None if neither is available (caller should 400).
+    """
+    if req.user and req.user.strip():
+        return req.user.strip()
+
+    user_msgs = [m for m in req.messages if m.role == "user"]
+    if not user_msgs:
+        return None
+    first = _content_to_text(user_msgs[0].content).strip()
+    if not first:
+        return None
+    return "wa-" + hashlib.sha256(first.encode("utf-8")).hexdigest()[:16]
+
+
 def _check_rate_limit(key: str) -> bool:
     now = time.time()
     window = _rate_window.setdefault(key, [])
@@ -132,10 +159,12 @@ async def chat_completions(req: ChatRequest, request: Request):
     if not auth.startswith("Bearer ") or auth[7:] != BRIDGE_TOKEN:
         raise HTTPException(status_code=401, detail="unauthorized")
 
-    # Require caller identity — no shared "default" session
-    if not req.user or not req.user.strip():
-        raise HTTPException(status_code=400, detail="'user' field is required")
-    key = req.user.strip()
+    # Derive per-caller session key. Prefers explicit user field; otherwise
+    # hashes the first user message (stable per WhatsApp sender because
+    # OpenClaw replays full history each request).
+    key = _derive_peer_key(req)
+    if not key:
+        raise HTTPException(status_code=400, detail="unable to derive caller identity")
 
     # Rate limit per caller
     if not _check_rate_limit(key):
