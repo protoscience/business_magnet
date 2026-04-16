@@ -207,11 +207,22 @@ WhatsApp integration uses [OpenClaw](https://github.com/openclaw/openclaw) as a 
        "whatsapp": {
          "dmPolicy": "allowlist",
          "allowFrom": ["+1XXXXXXXXXX"],
+         "groupPolicy": "allowlist",
+         "groupAllowFrom": ["+1XXXXXXXXXX"],
+         "groups": { "*": { "requireMention": true } },
          "enabled": true
        }
      }
    }
    ```
+
+   **Group behavior:** With `groups."*".requireMention=true`, Sonic only responds in
+   group chats when explicitly @-mentioned (native WhatsApp tap-to-mention).
+   `groupPolicy: "allowlist"` plus `groupAllowFrom` further restricts *who* can
+   trigger a reply — non-allowlisted senders are silently ignored even if they
+   @-mention Sonic. DMs use `dmPolicy`/`allowFrom` independently. Per OpenClaw
+   docs, replying to a Sonic message satisfies mention gating but does NOT
+   bypass the sender allowlist.
 
 4. Start the gateway:
    ```bash
