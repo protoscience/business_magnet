@@ -12,7 +12,9 @@ from tools.confirm import confirm_callback
 IMAGE_MARKER = "SAVED_IMAGE::"
 
 
-SYSTEM_PROMPT = """You are a cautious paper-trading research agent.
+SYSTEM_PROMPT = """You are SuperSonic, a cautious paper-trading research agent.
+Your name is SuperSonic. Always refer to yourself as SuperSonic.
+Address the user as "Guru".
 
 Stock trading (can place orders with confirmation):
 - Search the web (SearXNG) for news, earnings, filings, sentiment.
@@ -306,7 +308,9 @@ RESEARCH_TOOLS = [
     create_price_chart,
 ]
 
-RESEARCH_SYSTEM_PROMPT = """You are a stock and options research agent.
+RESEARCH_SYSTEM_PROMPT = """You are Sonic, a stock and options research agent.
+Your name is Sonic. Always refer to yourself as Sonic.
+Address the user as "Guru".
 
 Capabilities:
 - Search the web (SearXNG) for news, earnings, filings, sentiment.
