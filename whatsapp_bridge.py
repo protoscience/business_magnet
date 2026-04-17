@@ -204,6 +204,67 @@ async def chat_completions(req: ChatRequest, request: Request):
     latest = _content_to_text(user_msgs[-1].content)
 
     lock = _get_lock(key)
+    cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    model_name = req.model or "trading-agent"
+    now = int(time.time())
+
+    def _delta_chunk(delta: dict) -> str:
+        chunk = {
+            "id": cmpl_id,
+            "object": "chat.completion.chunk",
+            "created": now,
+            "model": model_name,
+            "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+        }
+        return f"data: {json.dumps(chunk)}\n\n"
+
+    if req.stream:
+        async def _stream():
+            # Line-buffered so IMAGE_MARKER lines can be dropped whole without
+            # leaking the marker token into the user-visible stream.
+            yield _delta_chunk({"role": "assistant"})
+            line_buf = ""
+            total_chars = 0
+            async with lock:
+                confirm_callback.set(_wa_confirm_stub)
+                client = await _get_session(key)
+                await client.query(latest)
+                async for msg in client.receive_response():
+                    if isinstance(msg, AssistantMessage):
+                        for block in msg.content:
+                            if isinstance(block, TextBlock):
+                                line_buf += block.text
+                                while "\n" in line_buf:
+                                    line, line_buf = line_buf.split("\n", 1)
+                                    if IMAGE_MARKER in line:
+                                        continue
+                                    out = line + "\n"
+                                    total_chars += len(out)
+                                    yield _delta_chunk({"content": out})
+                            elif isinstance(block, ToolUseBlock):
+                                log.info(f"tool: {block.name}")
+                                # SSE comment — ignored by OpenAI parsers but keeps
+                                # the TCP stream alive during long tool calls.
+                                yield f": tool {block.name}\n\n"
+                    elif isinstance(msg, ResultMessage):
+                        break
+            if line_buf and IMAGE_MARKER not in line_buf:
+                total_chars += len(line_buf)
+                yield _delta_chunk({"content": line_buf})
+            if total_chars == 0:
+                yield _delta_chunk({"content": "(no reply)"})
+            log.info(f"Reply: peer={key[:8]}... chars={total_chars} (stream)")
+            done = {
+                "id": cmpl_id,
+                "object": "chat.completion.chunk",
+                "created": now,
+                "model": model_name,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            }
+            yield f"data: {json.dumps(done)}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+
     async with lock:
         confirm_callback.set(_wa_confirm_stub)
         client = await _get_session(key)
@@ -225,31 +286,6 @@ async def chat_completions(req: ChatRequest, request: Request):
             reply = "(no reply)"
 
     log.info(f"Reply: peer={key[:8]}... chars={len(reply)}")
-
-    cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-    model_name = req.model or "trading-agent"
-    now = int(time.time())
-
-    if req.stream:
-        async def _sse():
-            chunk = {
-                "id": cmpl_id,
-                "object": "chat.completion.chunk",
-                "created": now,
-                "model": model_name,
-                "choices": [{"index": 0, "delta": {"role": "assistant", "content": reply}, "finish_reason": None}],
-            }
-            yield f"data: {json.dumps(chunk)}\n\n"
-            done = {
-                "id": cmpl_id,
-                "object": "chat.completion.chunk",
-                "created": now,
-                "model": model_name,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-            }
-            yield f"data: {json.dumps(done)}\n\n"
-            yield "data: [DONE]\n\n"
-        return StreamingResponse(_sse(), media_type="text/event-stream")
 
     return {
         "id": cmpl_id,
