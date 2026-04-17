@@ -260,7 +260,7 @@ async def chat_completions(req: ChatRequest, request: Request):
             turns = result_msg.num_turns if result_msg else 0
             log.info(f"Reply: peer={key[:8]}... chars={total_chars} turns={turns} cost=${cost:.4f} (stream)")
             try:
-                cost_log.log_turn("wa", key, turns, cost)
+                cost_log.log_turn("wa", key, turns, cost, getattr(result_msg, "usage", None))
             except Exception:
                 log.exception("cost_log failed")
             done = {

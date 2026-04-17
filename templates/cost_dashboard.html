@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "Noto Color Emoji", sans-serif;
+    background: #0a0a0a;
+    color: #ffffff;
+    width: 980px;
+    padding: 24px;
+  }
+  .frame {
+    background: #111113;
+    border: 1px solid #26262a;
+    border-radius: 20px;
+    padding: 28px 32px 32px 32px;
+  }
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 22px;
+  }
+  .tabs, .filters { display: flex; gap: 8px; }
+  .pill {
+    padding: 8px 16px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #8a8a90;
+    background: transparent;
+  }
+  .pill.active { color: #0a0a0a; background: #ffffff; }
+  .filter {
+    padding: 6px 14px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #8a8a90;
+  }
+  .filter.active { color: #ffffff; background: #2a2a2e; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .card {
+    background: #1a1a1d;
+    border-radius: 14px;
+    padding: 18px 20px;
+  }
+  .card .label {
+    color: #8a8a90;
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 8px;
+  }
+  .card .value {
+    color: #ffffff;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+    line-height: 1;
+  }
+
+  .heatmap {
+    margin-top: 22px;
+    display: grid;
+    grid-template-columns: repeat({{ weeks }}, 1fr);
+    gap: 5px;
+  }
+  .col { display: grid; grid-template-rows: repeat(7, 22px); gap: 5px; }
+  .cell {
+    background: #1a1a1d;
+    border-radius: 4px;
+  }
+  .cell.l1 { background: #1e3a8a; }
+  .cell.l2 { background: #2563eb; }
+  .cell.l3 { background: #3b82f6; }
+  .cell.l4 { background: #60a5fa; }
+
+  .footer {
+    margin-top: 18px;
+    color: #8a8a90;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="topbar">
+      <div class="tabs">
+        <span class="pill active">Overview</span>
+        <span class="pill">Models</span>
+      </div>
+      <div class="filters">
+        <span class="filter {% if window == 'all' %}active{% endif %}">All</span>
+        <span class="filter {% if window == '30d' %}active{% endif %}">30d</span>
+        <span class="filter {% if window == '7d' %}active{% endif %}">7d</span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card"><div class="label">Sessions</div><div class="value">{{ sessions }}</div></div>
+      <div class="card"><div class="label">Messages</div><div class="value">{{ messages }}</div></div>
+      <div class="card"><div class="label">Total tokens</div><div class="value">{{ total_tokens_display }}</div></div>
+      <div class="card"><div class="label">Active days</div><div class="value">{{ active_days }}</div></div>
+    </div>
+
+    <div class="grid">
+      <div class="card"><div class="label">Current streak</div><div class="value">{{ current_streak }}d</div></div>
+      <div class="card"><div class="label">Longest streak</div><div class="value">{{ longest_streak }}d</div></div>
+      <div class="card"><div class="label">Peak hour</div><div class="value">{{ peak_hour }}</div></div>
+      <div class="card"><div class="label">Top peer</div><div class="value">{{ top_peer }}</div></div>
+    </div>
+
+    <div class="heatmap">
+      {% for col in heatmap %}
+      <div class="col">
+        {% for level in col %}
+        <div class="cell {% if level > 0 %}l{{ level }}{% endif %}"></div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="footer">{{ footer }}</div>
+  </div>
+</body>
+</html>

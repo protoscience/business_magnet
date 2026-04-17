@@ -205,7 +205,7 @@ async def handle_message(message: discord.Message):
                         cost = msg.total_cost_usd or 0
                         log.info(f"user={user_id} turns={msg.num_turns} cost=${cost:.4f}")
                         try:
-                            cost_log.log_turn("discord", user_id, msg.num_turns, cost)
+                            cost_log.log_turn("discord", user_id, msg.num_turns, cost, getattr(msg, "usage", None))
                         except Exception:
                             log.exception("cost_log failed")
                         break

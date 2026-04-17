@@ -10,19 +10,23 @@ from tools.cost_log import connect
 
 DAILY_RETENTION_DAYS = 365
 
+_SUM_COLS = ("turns", "cost_usd", "input_tokens", "output_tokens",
+             "cache_read_tokens", "cache_creation_tokens")
+
 
 def _rollup_raw_to_daily(conn) -> int:
     today = datetime.now(timezone.utc).date().isoformat()
+    sums_select = ", ".join(f"SUM({c})" for c in _SUM_COLS)
+    cols = ", ".join(_SUM_COLS)
+    updates = ", ".join(f"{c} = daily.{c} + excluded.{c}" for c in _SUM_COLS)
     cur = conn.execute(
-        """
-        INSERT INTO daily (date, channel, peer, turns, cost_usd)
-        SELECT date(ts), channel, peer, SUM(turns), SUM(cost_usd)
+        f"""
+        INSERT INTO daily (date, channel, peer, {cols})
+        SELECT date(ts), channel, peer, {sums_select}
         FROM turns
         WHERE date(ts) < ?
         GROUP BY date(ts), channel, peer
-        ON CONFLICT(date, channel, peer) DO UPDATE SET
-            turns = daily.turns + excluded.turns,
-            cost_usd = daily.cost_usd + excluded.cost_usd
+        ON CONFLICT(date, channel, peer) DO UPDATE SET {updates}
         """,
         (today,),
     )
@@ -33,14 +37,16 @@ def _rollup_raw_to_daily(conn) -> int:
 
 def _rebuild_weekly(conn) -> None:
     conn.execute("DELETE FROM weekly")
+    sums_select = ", ".join(f"SUM({c})" for c in _SUM_COLS)
+    cols = ", ".join(_SUM_COLS)
     # strftime('%w'): Sunday=0..Saturday=6. Monday-based week_start:
     #   offset_days = (w + 6) % 7  (Mon→0, Tue→1, ..., Sun→6)
     conn.execute(
-        """
-        INSERT INTO weekly (week_start, channel, peer, turns, cost_usd)
+        f"""
+        INSERT INTO weekly (week_start, channel, peer, {cols})
         SELECT
             date(date, '-' || ((CAST(strftime('%w', date) AS INTEGER) + 6) % 7) || ' days') AS week_start,
-            channel, peer, SUM(turns), SUM(cost_usd)
+            channel, peer, {sums_select}
         FROM daily
         GROUP BY week_start, channel, peer
         """
