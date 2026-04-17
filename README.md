@@ -11,15 +11,25 @@ Discord ──► Discord Bot (full trading + research)
                 │                    ──► SearXNG (web search)
                 │                    ──► Playwright (image gen)
                 │
+                └──► logs/cost.db (per-turn spend)
+
 WhatsApp ──► OpenClaw (VPS) ──► SSH tunnel ──► WA Bridge (research only)
                                                     │
                                                     ├──► Claude Agent SDK ──► Alpaca (quotes/options data)
-                                                                         ──► SearXNG (web search)
+                                                    │                    ──► SearXNG (web search)
+                                                    │
+                                                    └──► logs/cost.db (per-turn spend)
+
+Shared:
+  logs/cost.db  ◄── trading-cost-rollup.timer  (nightly: raw→daily→weekly, prune)
+                    view with: python -m tools.cost_summary
 ```
 
 **Discord**: Full access — stock quotes, bars, options chains, web search, analysis cards, price charts, and paper order placement (with button confirmation).
 
 **WhatsApp**: Research only — no account info, no positions, no order placement. Designed for group discussions.
+
+**Cost tracking**: Both services log `(channel, peer, turns, cost_usd)` to a local SQLite DB on every `ResultMessage`. A nightly systemd timer rolls raw turns into `daily`, rebuilds `weekly` from `daily`, and prunes daily rows older than a year.
 
 ## Prerequisites
 
