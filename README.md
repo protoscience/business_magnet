@@ -1,6 +1,21 @@
 # Business Magnet - AI Trading Research Agent
 
+[![Security](https://github.com/protoscience/business_magnet/actions/workflows/security.yml/badge.svg)](https://github.com/protoscience/business_magnet/actions/workflows/security.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/protoscience/business_magnet/badge)](https://scorecard.dev/viewer/?uri=github.com/protoscience/business_magnet)
+
 A Claude-powered trading research agent with Discord and WhatsApp interfaces. Uses Alpaca for paper trading and market data, SearXNG for web search, and generates rich visual analysis cards.
+
+## Security
+
+Every push and PR to `main` runs:
+
+- **CodeQL** (Python SAST, security-and-quality queries)
+- **Bandit** (Python-specific security linter, results uploaded as SARIF)
+- **pip-audit** (CVE scan on `requirements.txt` — build fails on known vulnerabilities)
+- **Gitleaks** (secret scanner across full history)
+- **OpenSSF Scorecard** (public security-posture score, weekly)
+
+Dependencies are kept current via **Dependabot** (weekly PRs for pip packages and GitHub Actions). Scan results are visible under the repo's *Security* tab; the badges above show the latest status.
 
 ## Architecture
 
