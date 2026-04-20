@@ -1,0 +1,6 @@
+[Unit]
+Description=Trading Agent - Back up OpenClaw state on config change
+
+[Service]
+Type=oneshot
+ExecStart=/home/eswar/claude/trading-agent/tools/openclaw_backup.sh

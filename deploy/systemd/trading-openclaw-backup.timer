@@ -1,0 +1,11 @@
+[Unit]
+Description=Trading Agent - Poll OpenClaw config every 2 min; back up on change
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=10s
+Unit=trading-openclaw-backup.service
+
+[Install]
+WantedBy=timers.target
