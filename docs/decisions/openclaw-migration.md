@@ -16,11 +16,37 @@ Root cause: [issue #64478](https://github.com/openclaw/openclaw/issues/64478) �
 
 ### Remaining blocker — LLM-generated media in WhatsApp replies
 
-OpenClaw calls our bridge as a pure OpenAI-compatible LLM endpoint. The request contains **no sender identity** — `user=None` on the body, no identifying HTTP headers. We confirmed this by instrumenting the bridge and capturing one real request.
+OpenClaw's intended mechanism for LLM-generated media is inline `MEDIA:/abs/path` markers in the LLM reply that OpenClaw auto-attaches — tracked as [issue #66635](https://github.com/openclaw/openclaw/issues/66635), still failing in 2026.4.14 for LLM-path replies (works for CLI). No confirmed target release; previously guessed 2026.4.19+ without evidence.
 
-Consequence: the bridge cannot decide to ship a media attachment out-of-band because it doesn't know which WhatsApp number to target.
+### Clarification on sender identity (2026-04-22)
 
-OpenClaw's intended mechanism is inline `MEDIA:/abs/path` markers in the LLM reply that OpenClaw auto-attaches — tracked as [issue #66635](https://github.com/openclaw/openclaw/issues/66635), still failing in 2026.4.14 for LLM-path replies (works for CLI). Expected fix in 2026.4.19+.
+Earlier investigation had claimed OpenClaw doesn't pass sender identity to the LLM backend. That was wrong. Identity **is** passed — just not in the OpenAI `user` field or HTTP headers. It's embedded in the **content of each user message** as a structured metadata block, before the actual user text:
+
+```
+Conversation info (untrusted metadata):
+{
+  "sender_id": "+14084258476",
+  "sender": "Bala",
+  "conversation_label": "<group JID or DM peer>",
+  "is_group_chat": true,
+  "was_mentioned": true,
+  "group_subject": "<group title>",
+  "history_count": 14,
+  "timestamp": "..."
+}
+
+Sender (untrusted metadata):
+{
+  "label": "Bala (+14084258476)",
+  "id": "+14084258476",
+  "name": "Bala",
+  "e164": "+14084258476"
+}
+
+<actual user message here>
+```
+
+Consequence: our bridge can parse `sender_id` from the latest user message and use it directly for memory keying, access logging, or anything else that needs per-sender identity. No WAHA migration required for the "remember Ayaps vs Boss" use case. The media-send blocker is unaffected by this finding — it's a separate routing problem inside OpenClaw.
 
 ## Decision matrix considered
 
@@ -35,7 +61,7 @@ WAHA Free is ruled out — loses on both speed and media. If we migrate, it's WA
 
 ## Decision
 
-**Option 1 — wait.** On 2026.4.14 everything currently shipping (text replies, CLI-invoked weather card) works. When 2026.4.19+ lands, verify inline-MEDIA LLM replies work; if yes, we just add a Sonic prompt line that allows `MEDIA:` markers on explicit user request. If no, revisit WAHA migration.
+**Option 1 — wait for LLM-path media fix, continue on OpenClaw for everything else.** On 2026.4.14 text replies and CLI-invoked outbound media work. Per-sender identity works via metadata parsing (see clarification above), so the adjacent "agents souls and memory" project is unblocked without WAHA. When the LLM-path media fix lands upstream, verify it works and add a Sonic prompt line that allows `MEDIA:` markers on explicit user request. If it doesn't land within a timeframe Boss finds acceptable, revisit WAHA migration.
 
 ## Related open concern
 

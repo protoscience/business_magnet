@@ -4,7 +4,11 @@
 
 ## Goal
 
-Give Sonic (WhatsApp) and SuperSonic (Discord) **consistent personalities** ("soul") and **persistent per-peer memory** that survives beyond the SDK's 12-hour live-session TTL. Model the design on OpenClaw's memory pattern (short-term → promote → long-term, RAG chunks, REM/dreaming) but implement it entirely in our own codebase. OpenClaw's native memory system is not wired in — it was explicitly out of scope.
+Give Sonic (WhatsApp) and SuperSonic (Discord) **consistent personalities** ("soul") and **persistent per-sender memory** that survives beyond the SDK's 12-hour live-session TTL. Model the design on OpenClaw's memory pattern (short-term → promote → long-term, RAG chunks, REM/dreaming) but implement it entirely in our own codebase. OpenClaw's native memory system is not wired in — it was explicitly out of scope.
+
+## Sender identity (resolved 2026-04-22)
+
+Earlier versions of this doc flagged per-sender memory in groups as blocked by OpenClaw not passing sender identity. That was wrong. OpenClaw embeds a JSON metadata block at the start of each user message containing `sender_id` (E.164 phone), `sender` (display name), `conversation_label`, `is_group_chat`, and `was_mentioned`. See `openclaw-migration.md` for the full shape. The bridge will parse that block and use `sender_id` as the memory key. No WAHA migration required.
 
 ## Three clocks worth distinguishing
 
@@ -29,11 +33,12 @@ Extending the session TTL to a week was considered and rejected — each live se
 ### Phase 1 — Soul + long-term memory only (~4h)
 
 - `prompts/sonic_soul.md`, `prompts/supersonic_soul.md` — agent personality, quirks, humor, vocab boundaries. Git-tracked. Loaded into the system prompt every turn.
-- `logs/memory/<agent>/<peer>/MEMORY.md` — per-peer facts, markdown, injected into the system prompt after the soul block.
-- New `remember(fact)` tool — appends to the peer's `MEMORY.md` with timestamp + light dedup.
-- Bridge and Discord bot both read/write per-peer files but in **separate per-agent trees** (siloing).
+- `logs/memory/<agent>/<sender_id>/MEMORY.md` — per-sender facts, markdown, injected into the system prompt after the soul block. `sender_id` is the E.164 phone parsed from OpenClaw's metadata block (WhatsApp) or the Discord user id (Discord).
+- New `remember(fact)` tool — appends to the sender's `MEMORY.md` with timestamp + light dedup.
+- Bridge and Discord bot both read/write per-sender files but in **separate per-agent trees** (siloing — `logs/memory/sonic/...` vs `logs/memory/supersonic/...`).
+- Fallback: if metadata parsing fails (malformed JSON, absent block), fall back to the existing hash-of-first-message peer key and continue without memory. Never crash a turn on memory errors.
 
-After Phase 1, Sonic has a voice, and remembers things like "long-term investor, owns SCHD/VOO, dislikes options" across weeks.
+After Phase 1, Sonic has a voice, and remembers things like "long-term investor, owns SCHD/VOO, dislikes options" per actual person — Bala, KP_NeverQuits, Boss, Ayaps each have their own memory regardless of whether they DM or @-mention in groups.
 
 ### Phase 2 — Short-term + promotion (~4h)
 
