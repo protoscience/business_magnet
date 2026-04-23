@@ -1,3 +1,5 @@
+from contextvars import ContextVar
+
 from claude_agent_sdk import tool, create_sdk_mcp_server, ClaudeAgentOptions
 
 from tools import search as search_tool
@@ -7,6 +9,13 @@ from tools import options as options_tool
 from tools import imagegen
 from tools import imagegen_rich
 from tools.confirm import confirm_callback
+from tools import memory as memory_mod
+
+# Per-turn context set by the bridge/discord-bot before calling client.query().
+# Tools (remember, recall_about_me) read these to know which agent and sender
+# the current invocation belongs to.
+active_agent: ContextVar[str | None] = ContextVar("active_agent", default=None)
+active_sender: ContextVar[str | None] = ContextVar("active_sender", default=None)
 
 
 IMAGE_MARKER = "SAVED_IMAGE::"
@@ -296,6 +305,42 @@ async def create_price_chart(args):
     return {"content": [{"type": "text", "text": f"{IMAGE_MARKER}{path}"}]}
 
 
+@tool(
+    "remember",
+    "Save a durable fact about the person you're talking to. Use when they share "
+    "a preference, holding, style, constraint, or anything worth recalling in "
+    "future conversations — e.g. 'long-term investor', 'owns SCHD and VOO', "
+    "'avoids options', 'based in Texas'. Keep each fact short and specific. "
+    "Silent operation — the user does not see confirmation.",
+    {"fact": str},
+)
+async def remember(args):
+    agent = active_agent.get()
+    sender = active_sender.get()
+    if not agent or not sender:
+        return {"content": [{"type": "text", "text": "memory: no active sender"}]}
+    ok = memory_mod.append_fact(agent, sender, args.get("fact", ""))
+    return {"content": [{"type": "text", "text": "noted" if ok else "already known"}]}
+
+
+@tool(
+    "recall_about_me",
+    "Return what you remember about the current user. Use when they ask "
+    "'what do you remember about me?', 'what do you know about me?', or similar. "
+    "Returns the raw memory markdown for you to format conversationally.",
+    {},
+)
+async def recall_about_me(args):
+    agent = active_agent.get()
+    sender = active_sender.get()
+    if not agent or not sender:
+        return {"content": [{"type": "text", "text": "No active sender context."}]}
+    mem = memory_mod.load_memory(agent, sender)
+    if not mem:
+        return {"content": [{"type": "text", "text": "(no memory saved yet)"}]}
+    return {"content": [{"type": "text", "text": mem}]}
+
+
 ALL_TOOLS = [
     search_web,
     get_quote,
@@ -310,6 +355,8 @@ ALL_TOOLS = [
     get_option_snapshot,
     create_analysis_image,
     create_price_chart,
+    remember,
+    recall_about_me,
 ]
 
 # Research-only subset: no account, positions, orders, or order placement
@@ -323,6 +370,8 @@ RESEARCH_TOOLS = [
     get_option_snapshot,
     create_analysis_image,
     create_price_chart,
+    remember,
+    recall_about_me,
 ]
 
 RESEARCH_SYSTEM_PROMPT = """You are Sonic, a market discussion and research agent on WhatsApp.
@@ -411,13 +460,32 @@ def _make_allowed(tools):
     return [f"mcp__trading__{t.name if hasattr(t, 'name') else t.__name__}" for t in tools]
 
 
-def build_options(mode: str = "full") -> ClaudeAgentOptions:
+def build_options(
+    mode: str = "full",
+    agent_name: str | None = None,
+    sender_key: str | None = None,
+    sender_name: str | None = None,
+) -> ClaudeAgentOptions:
+    """Build Claude Agent SDK options.
+
+    agent_name: "sonic" or "supersonic" — selects the soul file and scopes
+        memory. Backward compatible: if None, no soul/memory is injected.
+    sender_key: stable per-user identity (E.164 phone for WhatsApp,
+        "discord:<user_id>" for Discord). Used as the memory bucket.
+    sender_name: display name for greetings and memory headers.
+    """
     if mode == "research":
         tools = RESEARCH_TOOLS
-        prompt = RESEARCH_SYSTEM_PROMPT
+        base_prompt = RESEARCH_SYSTEM_PROMPT
     else:
         tools = ALL_TOOLS
-        prompt = SYSTEM_PROMPT
+        base_prompt = SYSTEM_PROMPT
+
+    prompt = base_prompt
+    if agent_name:
+        preamble = memory_mod.build_preamble(agent_name, sender_key, sender_name)
+        if preamble:
+            prompt = preamble + "\n\n---\n\n" + base_prompt
 
     server = create_sdk_mcp_server(
         name="trading-tools",

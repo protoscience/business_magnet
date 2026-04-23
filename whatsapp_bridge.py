@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -25,6 +26,7 @@ from claude_agent_sdk import (
     ResultMessage,
 )
 
+import agent_core
 from agent_core import build_options, IMAGE_MARKER
 from tools.confirm import confirm_callback
 from tools import cost_log
@@ -73,30 +75,70 @@ def _content_to_text(content) -> str:
     return ""
 
 
-def _derive_peer_key(req: "ChatRequest") -> str | None:
-    """
-    Derive a stable per-caller key.
+_META_JSON_RE = re.compile(
+    r"Conversation info[^\n]*\n```json\s*(\{.*?\})\s*```",
+    flags=re.DOTALL,
+)
+_META_SID_RE = re.compile(r'"sender_id"\s*:\s*"([^"]+)"')
+_META_NAME_RE = re.compile(r'"sender"\s*:\s*"([^"]+)"')
+
+
+def _extract_openclaw_sender(content: str) -> tuple[str | None, str | None]:
+    """Parse OpenClaw's "Conversation info" metadata block at the start of a
+    user message. Returns (sender_id, sender_name) or (None, None).
+
+    Best-effort: try strict JSON first, fall back to regex scrape."""
+    if "Conversation info" not in content[:200]:
+        return None, None
+    m = _META_JSON_RE.search(content)
+    if m:
+        try:
+            meta = json.loads(m.group(1))
+            return meta.get("sender_id"), meta.get("sender")
+        except Exception:
+            pass
+    head = content[:2000]
+    sid_m = _META_SID_RE.search(head)
+    name_m = _META_NAME_RE.search(head)
+    return (sid_m.group(1) if sid_m else None,
+            name_m.group(1) if name_m else None)
+
+
+def _derive_peer_identity(req: "ChatRequest") -> tuple[str | None, str | None]:
+    """Return (sender_key, sender_name).
 
     Priority:
-      1. explicit `user` field on the request (if a future OpenClaw version
-         learns to forward sender identity, or when tested via curl).
-      2. SHA-256 of the FIRST user message in the replayed history.
-         OpenClaw replays the full history per WhatsApp sender on every
-         request, so messages[0] is stable within a user's ongoing
-         conversation and ~unique between distinct WhatsApp users.
+      1. Explicit `user` field on the request.
+      2. OpenClaw's per-message "Conversation info" metadata block containing
+         sender_id (E.164 phone) and sender (display name).
+      3. Legacy fallback: SHA-256 of the first user message. Coarser
+         (per-group-session rather than per-sender) but works even if the
+         metadata block is missing.
 
-    Returns None if neither is available (caller should 400).
+    Returns (None, None) if no caller identity can be derived.
     """
     if req.user and req.user.strip():
-        return req.user.strip()
+        return req.user.strip(), None
 
     user_msgs = [m for m in req.messages if m.role == "user"]
     if not user_msgs:
-        return None
+        return None, None
+
+    latest = _content_to_text(user_msgs[-1].content).strip()
+    sid, name = _extract_openclaw_sender(latest)
+    if sid:
+        return sid, name
+
     first = _content_to_text(user_msgs[0].content).strip()
     if not first:
-        return None
-    return "wa-" + hashlib.sha256(first.encode("utf-8")).hexdigest()[:16]
+        return None, None
+    return "wa-" + hashlib.sha256(first.encode("utf-8")).hexdigest()[:16], None
+
+
+def _derive_peer_key(req: "ChatRequest") -> str | None:
+    """Back-compat wrapper. Returns just the key."""
+    key, _ = _derive_peer_identity(req)
+    return key
 
 
 async def _expire_session(key: str):
@@ -132,14 +174,20 @@ async def _start_sweeper():
     asyncio.create_task(_sweep_idle_sessions())
 
 
-async def _get_session(key: str) -> ClaudeSDKClient:
+async def _get_session(key: str, sender_name: str | None = None) -> ClaudeSDKClient:
     meta = _session_meta.get(key, {})
     idle = time.time() - meta.get("last_used", 0)
     if key in _sessions and idle > SESSION_MAX_AGE:
         await _expire_session(key)
 
     if key not in _sessions:
-        client = ClaudeSDKClient(options=build_options(mode="research"))
+        options = build_options(
+            mode="research",
+            agent_name="sonic",
+            sender_key=key,
+            sender_name=sender_name,
+        )
+        client = ClaudeSDKClient(options=options)
         await client.connect()
         _sessions[key] = client
         _session_meta[key] = {"last_used": time.time(), "turns": 0}
@@ -170,9 +218,9 @@ async def chat_completions(req: ChatRequest, request: Request):
         raise HTTPException(status_code=401, detail="unauthorized")
 
     # Derive per-caller session key. Prefers explicit user field; otherwise
-    # hashes the first user message (stable per WhatsApp sender because
-    # OpenClaw replays full history each request).
-    key = _derive_peer_key(req)
+    # parses OpenClaw's per-message metadata block for sender_id/name; falls
+    # back to a hash of the first user message for legacy coverage.
+    key, sender_name = _derive_peer_identity(req)
     if not key:
         raise HTTPException(status_code=400, detail="unable to derive caller identity")
 
@@ -208,7 +256,9 @@ async def chat_completions(req: ChatRequest, request: Request):
             result_msg = None
             async with lock:
                 confirm_callback.set(_wa_confirm_stub)
-                client = await _get_session(key)
+                agent_core.active_agent.set("sonic")
+                agent_core.active_sender.set(key)
+                client = await _get_session(key, sender_name)
                 await client.query(latest)
                 async for msg in client.receive_response():
                     if isinstance(msg, AssistantMessage):
@@ -255,7 +305,9 @@ async def chat_completions(req: ChatRequest, request: Request):
 
     async with lock:
         confirm_callback.set(_wa_confirm_stub)
-        client = await _get_session(key)
+        agent_core.active_agent.set("sonic")
+        agent_core.active_sender.set(key)
+        client = await _get_session(key, sender_name)
         await client.query(latest)
 
         text_buf = ""

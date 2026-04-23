@@ -17,6 +17,7 @@ from claude_agent_sdk import (
     ResultMessage,
 )
 
+import agent_core
 from agent_core import build_options, IMAGE_MARKER
 from tools.confirm import confirm_callback
 from tools import cost_log
@@ -67,7 +68,7 @@ async def _expire_session(user_id: int):
         log.info(f"Expired session for user {user_id}")
 
 
-async def _get_session(user_id: int) -> ClaudeSDKClient:
+async def _get_session(user_id: int, user_name: str | None = None) -> ClaudeSDKClient:
     import time
     meta = _session_meta.get(user_id, {})
     idle = time.time() - meta.get("last_used", 0)
@@ -75,7 +76,12 @@ async def _get_session(user_id: int) -> ClaudeSDKClient:
         await _expire_session(user_id)
 
     if user_id not in _sessions:
-        client = ClaudeSDKClient(options=build_options())
+        options = build_options(
+            agent_name="supersonic",
+            sender_key=f"discord:{user_id}",
+            sender_name=user_name,
+        )
+        client = ClaudeSDKClient(options=options)
         await client.connect()
         _sessions[user_id] = client
         _session_meta[user_id] = {"last_used": time.time(), "turns": 0}
@@ -167,7 +173,10 @@ async def handle_message(message: discord.Message):
     async with lock:
         async with channel.typing():
             confirm_callback.set(_make_discord_confirm(channel, user_id))
-            client = await _get_session(user_id)
+            agent_core.active_agent.set("supersonic")
+            agent_core.active_sender.set(f"discord:{user_id}")
+            user_name = getattr(message.author, "display_name", None) or message.author.name
+            client = await _get_session(user_id, user_name)
 
             try:
                 await client.query(content)
