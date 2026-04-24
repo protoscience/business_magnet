@@ -1,6 +1,11 @@
 # Auto trading for SuperSonic
 
-**Status:** Active build — Phase 1 in progress on branch `auto-trading`.
+**Status:** Phase 1 deployed. Phase 2 ready on branch `auto-trading-phase2`.
+
+## Progress
+
+- **Phase 1** — deployed to `main` as commit `3bac51d` on 2026-04-24. `auto_place_order` tool callable from Discord, rails + audit log + dry-run working end-to-end. Smoke-confirmed with a manual `@SuperSonic auto_place_order AAPL...` call that cleanly hit the time-window rail.
+- **Phase 2** — full scope (LLM scan + dynamic watchlist + reliability) ready on branch `auto-trading-phase2`. Awaiting deploy. See §"Phase 2 details" below.
 
 ## Scope
 
@@ -65,13 +70,54 @@ SuperSonic memory will help auto-trading context — remembers Boss's risk toler
 
 | Phase | What | Est | Status |
 |---|---|---|---|
-| 0 | This decision doc + worktree setup | 30 min | ✓ done |
-| 1 | `tools/auto_trade.py` (execute_order + rails + kill-switch + audit log) + `logs/trades.db` + `auto_place_order` MCP tool + SuperSonic soul/memory pulled from souls-memory | 1 day | in progress |
-| 2 | Mode B — LLM scan. Timer-driven, dry-run first. Watchlist injection with static + dynamic. | 1 day | |
-| 3 | Mode C — Strategy harness. Base class, registry, one canned strategy. | 1 day | |
-| 4 | Mode D — Webhook. `trading_webhook.py` on port 4001 with shared-secret auth. | half day | |
-| 5 | Grafana dashboard: open positions, daily P&L, trade log, win rate by source. | half day | |
-| 6 | Discord push-notify on every trade + daily summary. | half day | |
+| 0 | Decision doc + worktree setup | 30 min | ✓ done |
+| 1 | `tools/auto_trade.py` (execute_order + rails + kill-switch + audit log) + `logs/trades.db` + `auto_place_order` MCP tool + SuperSonic soul/memory pulled from souls-memory | 1 day | ✓ deployed 2026-04-24 |
+| 2 | Mode B — LLM scan + dynamic watchlist + DB reliability hardening | 1 day | ✓ built, awaiting deploy |
+| 3 | Mode C — Strategy harness. Base class, registry, one canned strategy. | 1 day | queued |
+| 4 | Mode D — Webhook. `trading_webhook.py` on port 4001 with shared-secret auth. | half day | queued |
+| 5 | Grafana dashboard: open positions, daily P&L, trade log, win rate by source. | half day | queued |
+| 6 | Discord push-notify on every trade + daily summary. | half day | queued |
+
+## Phase 2 details (what shipped)
+
+**`tools/auto_scan.py`** — one-shot scan, timer-invoked. Flow:
+1. Market-hours guard via `TradingClient.get_clock()` — handles holidays + half-days, no static calendar needed.
+2. Kill-switch file check.
+3. Aggregate context: quotes + 20-day bars for static 12, account equity + positions + pnl_today, news/earnings snippets via `ticker_feeds`.
+4. Call Claude with `ClaudeAgentOptions(mcp_servers={}, allowed_tools=[])` — no tools, pure text-in / JSON-out. Saves tokens vs an agentic tool loop.
+5. Parse JSON `{entries, exits, passed_on, note}`. Tolerates stray markdown fences.
+6. Route each intent through `auto_trade.execute_order`. Same 9 rails as Phase 1, same audit log, same dry-run flag.
+
+**`prompts/auto_scan_prompt.md`** — scan-mode system prompt, separate from SuperSonic's interactive persona. Procedural, JSON-only output, high entry bar ("default correct answer is do nothing"), dynamic candidates allowed with clear catalysts.
+
+**`tools/ticker_feeds.py`** — SearXNG-based news + earnings snippet fetcher. Picked SearXNG over Finnhub free tier because (a) no external API-key signup, (b) already deployed, (c) raw snippets go into prompt — the LLM picks tickers, no brittle regex. Swap to Finnhub via `fetch_earnings_snippets` replacement if quality degrades.
+
+**`trading-auto-scan.{service,timer}`** — fires 25× per trading day at 09:35, 09:50, … 15:35, 15:45 in `America/New_York`. Mon–Fri only via systemd's `OnCalendar=Mon..Fri` restriction. Holidays still handled by the in-script Alpaca clock guard.
+
+### Phase 2 reliability hardening (also shipped)
+
+**`tools/db_backup.py`** — nightly integrity check + local tar + rsync to VPS + rotation. Runs at 03:15 local (staggered from cost-rollup at 03:00). Knobs: `DB_BACKUP_DIR`, `DB_BACKUP_REMOTE`, `DB_BACKUP_REMOTE_DIR`, `DB_BACKUP_KEEP`. Corrupt DB → aborts + preserves last-good remote copy.
+
+**`trading-db-backup.{service,timer}`** — installed alongside scan timer.
+
+## Deploy order for Phase 2
+
+```bash
+cd /home/eswar/claude/trading-agent
+git fetch origin auto-trading-phase2
+git merge --ff-only origin/auto-trading-phase2
+git push origin main
+
+# Install the two new timers
+systemctl --user daemon-reload
+systemctl --user enable --now trading-db-backup.timer
+systemctl --user enable --now trading-auto-scan.timer
+
+# Verify
+systemctl --user list-timers trading-auto-scan.timer trading-db-backup.timer --no-pager
+```
+
+First trading-hour scan will fire at the next 15-minute boundary past 09:35 ET on Monday. First backup at 03:15 tonight.
 
 ## Dry-run mode
 
