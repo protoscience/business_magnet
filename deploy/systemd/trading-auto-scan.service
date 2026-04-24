@@ -1,0 +1,10 @@
+[Unit]
+Description=Trading Agent - LLM-discretionary scan (Phase 2)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/eswar/claude/trading-agent
+EnvironmentFile=/home/eswar/claude/trading-agent/.env
+ExecStart=/home/eswar/claude/trading-agent/.venv/bin/python -m tools.auto_scan
+TimeoutStartSec=300
