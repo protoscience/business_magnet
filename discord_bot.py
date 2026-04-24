@@ -17,6 +17,7 @@ from claude_agent_sdk import (
     ResultMessage,
 )
 
+import agent_core
 from agent_core import build_options, IMAGE_MARKER
 from tools.confirm import confirm_callback
 from tools import cost_log
@@ -32,13 +33,6 @@ ALLOWED_USER_IDS = {
 }
 ALLOWED_CHANNEL_IDS = {
     int(x) for x in os.environ.get("DISCORD_ALLOWED_CHANNEL_IDS", "").split(",") if x.strip()
-}
-# DISCORD_ALLOWED_GUILD_IDS — comma-separated server IDs the bot is permitted
-# to stay in. Empty = DM-only; the bot will auto-leave any guild on join
-# and at startup. Defense-in-depth on top of the "Private Bot" setting
-# that prevents third parties from adding the bot in the first place.
-ALLOWED_GUILD_IDS = {
-    int(x) for x in os.environ.get("DISCORD_ALLOWED_GUILD_IDS", "").split(",") if x.strip()
 }
 
 DISCORD_MSG_LIMIT = 1900
@@ -74,7 +68,7 @@ async def _expire_session(user_id: int):
         log.info(f"Expired session for user {user_id}")
 
 
-async def _get_session(user_id: int) -> ClaudeSDKClient:
+async def _get_session(user_id: int, user_name: str | None = None) -> ClaudeSDKClient:
     import time
     meta = _session_meta.get(user_id, {})
     idle = time.time() - meta.get("last_used", 0)
@@ -82,7 +76,12 @@ async def _get_session(user_id: int) -> ClaudeSDKClient:
         await _expire_session(user_id)
 
     if user_id not in _sessions:
-        client = ClaudeSDKClient(options=build_options())
+        options = build_options(
+            agent_name="supersonic",
+            sender_key=f"discord:{user_id}",
+            sender_name=user_name,
+        )
+        client = ClaudeSDKClient(options=options)
         await client.connect()
         _sessions[user_id] = client
         _session_meta[user_id] = {"last_used": time.time(), "turns": 0}
@@ -174,7 +173,10 @@ async def handle_message(message: discord.Message):
     async with lock:
         async with channel.typing():
             confirm_callback.set(_make_discord_confirm(channel, user_id))
-            client = await _get_session(user_id)
+            agent_core.active_agent.set("supersonic")
+            agent_core.active_sender.set(f"discord:{user_id}")
+            user_name = getattr(message.author, "display_name", None) or message.author.name
+            client = await _get_session(user_id, user_name)
 
             try:
                 await client.query(content)
@@ -221,36 +223,10 @@ async def handle_message(message: discord.Message):
                 await channel.send(f"⚠️ Error: `{type(e).__name__}: {e}`")
 
 
-async def _maybe_leave_guild(guild: "discord.Guild", context: str) -> None:
-    """Leave a guild if it's not on the allowlist. Safe to call anywhere."""
-    if guild.id in ALLOWED_GUILD_IDS:
-        log.info(f"{context}: in allowed guild {guild.name!r} (id={guild.id})")
-        return
-    log.warning(
-        f"{context}: auto-leaving unauthorized guild {guild.name!r} (id={guild.id}, "
-        f"owner_id={guild.owner_id}, members~{getattr(guild, 'member_count', '?')})"
-    )
-    try:
-        await guild.leave()
-    except Exception:
-        log.exception(f"failed to leave guild {guild.id}")
-
-
 @bot.event
 async def on_ready():
     log.info(f"Logged in as {bot.user} (id={bot.user.id})")
-    log.info(f"User allowlist: {ALLOWED_USER_IDS or 'EMPTY (no users permitted)'}")
-    log.info(
-        f"Guild allowlist: {ALLOWED_GUILD_IDS or 'EMPTY (DM-only — will auto-leave any guild)'}"
-    )
-    # Sweep any guilds we're currently in. Auto-leave anything not on the list.
-    for guild in list(bot.guilds):
-        await _maybe_leave_guild(guild, "on_ready")
-
-
-@bot.event
-async def on_guild_join(guild: discord.Guild):
-    await _maybe_leave_guild(guild, "on_guild_join")
+    log.info(f"Allowlist: {ALLOWED_USER_IDS or 'EMPTY (no users permitted)'}")
 
 
 @bot.event
