@@ -442,8 +442,33 @@ def run_whatsapp_bridge(
                                         {"to": chat_id, "state": "composing"},
                                         timeout=5.0)
 
+    def _wrap_with_metadata(text: str, *, sender_id: str, sender_name: str | None,
+                            is_group: bool, group_subject: str | None,
+                            mentioned_bot: bool) -> str:
+        """Prepend a small metadata block so the agent knows WHO is talking
+        and in what context. Same shape as OpenClaw's "Conversation info"
+        block, so existing prompts that addressed the sender by name keep
+        working when migrated to the Baileys path."""
+        info = {
+            "sender_id": sender_id,
+            "sender_name": sender_name,
+            "is_group_chat": is_group,
+            "was_mentioned": mentioned_bot,
+        }
+        if group_subject:
+            info["group_subject"] = group_subject
+        json_blob = json.dumps(info, ensure_ascii=False, indent=2)
+        return (
+            "Conversation info (untrusted metadata, for context only):\n"
+            f"{json_blob}\n\n"
+            f"{text}"
+        )
+
     async def _process_inbound(*, chat_id: str, sender_key: str,
-                               sender_name: str | None, text: str) -> None:
+                               sender_name: str | None, text: str,
+                               is_group: bool = False,
+                               group_subject: str | None = None,
+                               mentioned_bot: bool = False) -> None:
         """Run one Claude turn for the inbound message and dispatch the reply."""
         stop_typing = asyncio.Event()
         typing_task = asyncio.create_task(_typing_pulse(chat_id, stop_typing))
@@ -452,17 +477,34 @@ def run_whatsapp_bridge(
             async with lock:
                 confirm_cb_ctx.set(confirm_callback)
                 client_sdk = await _get_session(sender_key, sender_name=sender_name)
-                await client_sdk.query(text)
-                text_buf = ""
+                wrapped = _wrap_with_metadata(
+                    text,
+                    sender_id=sender_key,
+                    sender_name=sender_name,
+                    is_group=is_group,
+                    group_subject=group_subject,
+                    mentioned_bot=mentioned_bot,
+                )
+                await client_sdk.query(wrapped)
+                # Track each AssistantMessage's text separately. Claude often
+                # narrates its plan ("Let me pull up X…") in an early message
+                # before tool calls, then writes the clean final answer in a
+                # later AssistantMessage after the tool results come back.
+                # Concatenating everything mixes the narration into the reply.
+                # Solution: keep only the LAST non-empty AssistantMessage.
+                last_assistant_text = ""
                 image_paths: list[str] = []
                 result_msg = None
                 async for msg in client_sdk.receive_response():
                     if isinstance(msg, AssistantMessage):
+                        msg_text = ""
                         for block in msg.content:
                             if isinstance(block, TextBlock):
-                                text_buf += block.text
+                                msg_text += block.text
                             elif isinstance(block, ToolUseBlock):
                                 log.info(f"tool: {block.name}")
+                        if msg_text.strip():
+                            last_assistant_text = msg_text
                     elif isinstance(msg, UserMessage):
                         for block in getattr(msg, "content", []) or []:
                             if isinstance(block, ToolResultBlock):
@@ -479,7 +521,7 @@ def run_whatsapp_bridge(
                         result_msg = msg
                         break
                 clean_lines = []
-                for line in text_buf.splitlines():
+                for line in last_assistant_text.splitlines():
                     if IMAGE_MARKER in line:
                         idx = line.index(IMAGE_MARKER) + len(IMAGE_MARKER)
                         p = line[idx:].strip()
@@ -546,8 +588,8 @@ def run_whatsapp_bridge(
                 return {"ok": True, "duplicate": True}
 
             log.info(f"Inbound (wa-inbound): chat={chat_id} sender={sender_id} "
-                     f"is_group={payload.get('is_group')} mention={payload.get('mentioned_bot')} "
-                     f"text={text[:80]!r}")
+                     f"name={sender_name!r} is_group={payload.get('is_group')} "
+                     f"mention={payload.get('mentioned_bot')} text={text[:80]!r}")
             # Run agent + dispatch in the background so the gateway doesn't
             # block on a 30+ second Claude turn. Webhook returns immediately.
             asyncio.create_task(_process_inbound(
@@ -555,6 +597,9 @@ def run_whatsapp_bridge(
                 sender_key=sender_id,
                 sender_name=sender_name,
                 text=text,
+                is_group=bool(payload.get("is_group")),
+                group_subject=payload.get("group_subject"),
+                mentioned_bot=bool(payload.get("mentioned_bot")),
             ))
             return {"ok": True, "queued": True}
     else:
