@@ -205,14 +205,23 @@ def run_whatsapp_bridge(
                     continue
                 await _expire_session(key)
 
-    async def _get_session(key: str, sender_name: str | None = None) -> ClaudeSDKClient:
+    async def _get_session(key: str,
+                           sender_name: str | None = None,
+                           is_group: bool = False,
+                           chat_id: str | None = None) -> ClaudeSDKClient:
         meta = session_meta.get(key, {})
         idle = time.time() - meta.get("last_used", 0)
         if key in sessions and idle > session_max_age_seconds:
             await _expire_session(key)
 
         if key not in sessions:
-            options = build_opts(sender_key=key, sender_name=sender_name)
+            # Apps with older factory signatures don't accept is_group/chat_id;
+            # fall back to the historical kwargs so we don't break them.
+            try:
+                options = build_opts(sender_key=key, sender_name=sender_name,
+                                     is_group=is_group, chat_id=chat_id)
+            except TypeError:
+                options = build_opts(sender_key=key, sender_name=sender_name)
             client = ClaudeSDKClient(options=options)
             await client.connect()
             sessions[key] = client
@@ -476,7 +485,8 @@ def run_whatsapp_bridge(
         try:
             async with lock:
                 confirm_cb_ctx.set(confirm_callback)
-                client_sdk = await _get_session(sender_key, sender_name=sender_name)
+                client_sdk = await _get_session(sender_key, sender_name=sender_name,
+                                                is_group=is_group, chat_id=chat_id)
                 wrapped = _wrap_with_metadata(
                     text,
                     sender_id=sender_key,
